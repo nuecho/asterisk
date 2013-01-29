@@ -3051,6 +3051,7 @@ static int handle_speechrecognize(struct ast_channel *chan, AGI *agi, int argc, 
 				reason = "hangup";
 			}
 			ast_frfree(fr);
+			fr = NULL;
 		}
 	}
 	if (fs)
