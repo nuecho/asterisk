@@ -4800,6 +4800,8 @@ int ast_senddigit_begin(struct ast_channel *chan, char digit)
 		ast_playtones_start(chan, 0, dtmf_tones[digit-'0'], 0);
 	else if (digit >= 'A' && digit <= 'D')
 		ast_playtones_start(chan, 0, dtmf_tones[digit-'A'+10], 0);
+	else if (digit >= 'a' && digit <= 'd')
+		ast_playtones_start(chan, 0, dtmf_tones[digit-'a'+10], 0);
 	else if (digit == '*')
 		ast_playtones_start(chan, 0, dtmf_tones[14], 0);
 	else if (digit == '#')
