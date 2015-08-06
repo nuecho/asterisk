@@ -1505,7 +1505,7 @@ static struct ast_frame *create_dtmf_frame(struct ast_rtp_instance *instance, en
 	struct ast_sockaddr remote_address = { {0,} };
 
 	ast_rtp_instance_get_remote_address(instance, &remote_address);
-
+#if 0
 	if (((compensate && type == AST_FRAME_DTMF_END) || (type == AST_FRAME_DTMF_BEGIN)) && ast_tvcmp(ast_tvnow(), rtp->dtmfmute) < 0) {
 		ast_debug(1, "Ignore potential DTMF echo from '%s'\n",
 			  ast_sockaddr_stringify(&remote_address));
@@ -1513,6 +1513,7 @@ static struct ast_frame *create_dtmf_frame(struct ast_rtp_instance *instance, en
 		rtp->dtmfsamples = 0;
 		return &ast_null_frame;
 	}
+#endif
 	ast_debug(1, "Creating %s DTMF Frame: %d (%c), at %s\n",
 		type == AST_FRAME_DTMF_END ? "END" : "BEGIN",
 		rtp->resp, rtp->resp,

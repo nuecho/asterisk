@@ -791,10 +791,13 @@ ASTERISK_FILE_VERSION(__FILE__, "$Revision$")
 			<parameter name="prompt" required="true" />
 			<parameter name="timeout" required="true" />
 			<parameter name="offset" />
+			<parameter name="filename" />
+			<parameter name="format" />
 		</syntax>
 		<description>
 			<para>Plays back given <replaceable>prompt</replaceable> while listening for
-			speech and dtmf.</para>
+			speech and dtmf. Optionally, the speech sent to recognition engine can be written to a file.
+			The <replaceable>format</replaceable> will specify what kind of file will be recorded.</para>
 		</description>
 	</agi>
 	<application name="AGI" language="en_US">
@@ -901,7 +904,7 @@ ASTERISK_FILE_VERSION(__FILE__, "$Revision$")
  ***/
 
 #define MAX_ARGS 128
-#define MAX_CMD_LEN 80
+#define MAX_CMD_LEN 4096
 #define AGI_NANDFS_RETRY 3
 #define AGI_BUF_LEN 2048
 #define SRV_PREFIX "_agi._tcp."
@@ -2897,7 +2900,7 @@ static int handle_speechrecognize(struct ast_channel *chan, AGI *agi, int argc, 
 {
 	struct ast_speech *speech = agi->speech;
 	const char *prompt;
-	char dtmf = 0, tmp[4096] = "", *buf = tmp;
+	char dtmf = 0, tmp[4*4096] = "", *buf = tmp;
 	int timeout = 0, offset = 0, res = 0, i = 0;
 	long current_offset = 0;
 	const char *reason = NULL;
@@ -2905,6 +2908,9 @@ static int handle_speechrecognize(struct ast_channel *chan, AGI *agi, int argc, 
 	struct ast_speech_result *result = NULL;
 	size_t left = sizeof(tmp);
 	time_t start = 0, current;
+	struct ast_filestream *fs = NULL;
+	char *recordfile = NULL;
+	char *recordformat = NULL;
 
 	if (argc < 4)
 		return RESULT_SHOWUSAGE;
@@ -2918,8 +2924,31 @@ static int handle_speechrecognize(struct ast_channel *chan, AGI *agi, int argc, 
 	timeout = atoi(argv[3]);
 
 	/* If offset is specified then convert from text to integer */
-	if (argc == 5)
+	if (argc >= 5)
 		offset = atoi(argv[4]);
+
+	/* If record file is specified */
+	if (argc >= 6) {
+		recordfile = argv[5];
+		recordformat = "wav";
+	}
+
+	/* If record format is specified */
+	if (argc >= 7)
+		recordformat = argv[6];
+
+	/* Open record fle if specified */
+	if (recordfile) {
+		fs = ast_writefile(recordfile, recordformat, NULL, O_CREAT | O_WRONLY, 0, AST_FILE_MODE);
+		if (!fs) {
+			//res = -1;
+			//ast_agi_send(agi->fd, chan, "200 result=%d (writefile)\n", res);
+			ast_debug(1, "handle_speechrecognize failed to open %s (%s)\n", recordfile, recordformat);
+			//return RESULT_FAILURE;
+		}
+		else
+			ast_debug(1, "handle_speechrecognize writing speech to %s (%s)\n", recordfile, recordformat);
+	}
 
 	/* We want frames coming in signed linear */
 	if (ast_set_read_format(chan, AST_FORMAT_SLINEAR)) {
@@ -2935,6 +2964,7 @@ static int handle_speechrecognize(struct ast_channel *chan, AGI *agi, int argc, 
 
 	/* Start playing prompt */
 	speech_streamfile(chan, prompt, chan->language, offset);
+	ast_set_flag(speech, AST_SPEECH_IN_PROMPT);
 
 	/* Go into loop reading in frames, passing to speech thingy, checking for hangup, all that jazz */
 	while (ast_strlen_zero(reason)) {
@@ -2972,6 +3002,7 @@ static int handle_speechrecognize(struct ast_channel *chan, AGI *agi, int argc, 
 			current_offset = ast_tellstream(chan->stream);
 			ast_stopstream(chan);
 			ast_clear_flag(speech, AST_SPEECH_QUIET);
+			ast_clear_flag(speech, AST_SPEECH_IN_PROMPT);
 		}
 
 		/* Check each state */
@@ -2980,11 +3011,15 @@ static int handle_speechrecognize(struct ast_channel *chan, AGI *agi, int argc, 
 			/* If the stream is done, start timeout calculation */
 			if ((timeout > 0) && start == 0 && ((!chan->stream) || (chan->streamid == -1 && chan->timingfunc == NULL))) {
 				ast_stopstream(chan);
+				ast_clear_flag(speech, AST_SPEECH_IN_PROMPT);
 				time(&start);
 			}
 			/* Write audio frame data into speech engine if possible */
-			if (fr && fr->frametype == AST_FRAME_VOICE)
+			if (fr && fr->frametype == AST_FRAME_VOICE) {
 				ast_speech_write(speech, fr->data.ptr, fr->datalen);
+				if (fs)
+					ast_writestream(fs, fr);
+			}
 			break;
 		case AST_SPEECH_STATE_WAIT:
 			/* Cue waiting sound if not already playing */
@@ -3016,8 +3051,11 @@ static int handle_speechrecognize(struct ast_channel *chan, AGI *agi, int argc, 
 				reason = "hangup";
 			}
 			ast_frfree(fr);
+			fr = NULL;
 		}
 	}
+	if (fs)
+		ast_closestream(fs);
 
 	if (!strcasecmp(reason, "speech")) {
 		/* Build string containing speech results */
