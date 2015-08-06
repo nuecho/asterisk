@@ -6942,6 +6942,8 @@ static struct ast_channel *sip_new(struct sip_pvt *i, int state, const char *tit
 		sip_pvt_lock(i);
 		return NULL;
 	}
+
+	ast_log(LOG_DEBUG, "sip_new '%s' Callid %s\n", tmp->name, !ast_strlen_zero(i->callid) ? i->callid : "<unknown>");
 	sip_pvt_lock(i);
 
 	tmp->tech = ( ast_test_flag(&i->flags[0], SIP_DTMF) == SIP_DTMF_INFO || ast_test_flag(&i->flags[0], SIP_DTMF) == SIP_DTMF_SHORTINFO) ?  &sip_tech_info : &sip_tech;
