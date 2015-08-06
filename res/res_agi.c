@@ -2964,6 +2964,7 @@ static int handle_speechrecognize(struct ast_channel *chan, AGI *agi, int argc, 
 
 	/* Start playing prompt */
 	speech_streamfile(chan, prompt, chan->language, offset);
+	ast_set_flag(speech, AST_SPEECH_IN_PROMPT);
 
 	/* Go into loop reading in frames, passing to speech thingy, checking for hangup, all that jazz */
 	while (ast_strlen_zero(reason)) {
@@ -3001,6 +3002,7 @@ static int handle_speechrecognize(struct ast_channel *chan, AGI *agi, int argc, 
 			current_offset = ast_tellstream(chan->stream);
 			ast_stopstream(chan);
 			ast_clear_flag(speech, AST_SPEECH_QUIET);
+			ast_clear_flag(speech, AST_SPEECH_IN_PROMPT);
 		}
 
 		/* Check each state */
@@ -3009,6 +3011,7 @@ static int handle_speechrecognize(struct ast_channel *chan, AGI *agi, int argc, 
 			/* If the stream is done, start timeout calculation */
 			if ((timeout > 0) && start == 0 && ((!chan->stream) || (chan->streamid == -1 && chan->timingfunc == NULL))) {
 				ast_stopstream(chan);
+				ast_clear_flag(speech, AST_SPEECH_IN_PROMPT);
 				time(&start);
 			}
 			/* Write audio frame data into speech engine if possible */
