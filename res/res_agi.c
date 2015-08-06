@@ -315,7 +315,7 @@ ASTERISK_FILE_VERSION(__FILE__, "$Revision$")
  ***/
 
 #define MAX_ARGS 128
-#define MAX_CMD_LEN 80
+#define MAX_CMD_LEN 4096
 #define AGI_NANDFS_RETRY 3
 #define AGI_BUF_LEN 2048
 
