@@ -1529,7 +1529,8 @@ static struct ast_channel *mgcp_new(struct mgcp_subchannel *sub, int state, cons
 		i->dsp = ast_dsp_new();
 		ast_dsp_set_features(i->dsp, DSP_FEATURE_DIGIT_DETECT);
 		/* this is to prevent clipping of dtmf tones during dsp processing */
-		ast_dsp_set_digitmode(i->dsp, DSP_DIGITMODE_NOQUELCH);
+        /* deactivated for unknown reason (yet) by Nu Echo, would need investigation */
+		/* ast_dsp_set_digitmode(i->dsp, DSP_DIGITMODE_NOQUELCH); */
 	} else {
 		i->dsp = NULL;
 	}
