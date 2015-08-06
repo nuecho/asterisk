@@ -869,6 +869,7 @@ static double stddev_compute(double stddev, double sample, double normdev, doubl
 
 static struct ast_frame *create_dtmf_frame(struct ast_rtp *rtp, enum ast_frame_type type)
 {
+#if 0
 	if (((ast_test_flag(rtp, FLAG_DTMF_COMPENSATE) && type == AST_FRAME_DTMF_END) ||
 	     (type == AST_FRAME_DTMF_BEGIN)) && ast_tvcmp(ast_tvnow(), rtp->dtmfmute) < 0) {
 		ast_debug(1, "Ignore potential DTMF echo from '%s'\n", ast_inet_ntoa(rtp->them.sin_addr));
@@ -876,6 +877,7 @@ static struct ast_frame *create_dtmf_frame(struct ast_rtp *rtp, enum ast_frame_t
 		rtp->dtmfsamples = 0;
 		return &ast_null_frame;
 	}
+#endif
 	ast_debug(1, "Sending dtmf: %d (%c), at %s\n", rtp->resp, rtp->resp, ast_inet_ntoa(rtp->them.sin_addr));
 	if (rtp->resp == 'X') {
 		rtp->f.frametype = AST_FRAME_CONTROL;
