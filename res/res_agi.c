@@ -2140,7 +2140,7 @@ static int speech_streamfile(struct ast_channel *chan, const char *filename, con
 static int handle_speechrecognize(struct ast_channel *chan, AGI *agi, int argc, char **argv)
 {
 	struct ast_speech *speech = agi->speech;
-	char *prompt, dtmf = 0, tmp[4096] = "", *buf = tmp;
+	char *prompt, dtmf = 0, tmp[4*4096] = "", *buf = tmp;
 	int timeout = 0, offset = 0, old_read_format = 0, res = 0, i = 0;
 	long current_offset = 0;
 	const char *reason = NULL;
