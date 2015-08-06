@@ -791,10 +791,13 @@ ASTERISK_FILE_VERSION(__FILE__, "$Revision$")
 			<parameter name="prompt" required="true" />
 			<parameter name="timeout" required="true" />
 			<parameter name="offset" />
+			<parameter name="filename" />
+			<parameter name="format" />
 		</syntax>
 		<description>
 			<para>Plays back given <replaceable>prompt</replaceable> while listening for
-			speech and dtmf.</para>
+			speech and dtmf. Optionally, the speech sent to recognition engine can be written to a file.
+			The <replaceable>format</replaceable> will specify what kind of file will be recorded.</para>
 		</description>
 	</agi>
 	<application name="AGI" language="en_US">
@@ -2905,6 +2908,9 @@ static int handle_speechrecognize(struct ast_channel *chan, AGI *agi, int argc, 
 	struct ast_speech_result *result = NULL;
 	size_t left = sizeof(tmp);
 	time_t start = 0, current;
+	struct ast_filestream *fs = NULL;
+	char *recordfile = NULL;
+	char *recordformat = NULL;
 
 	if (argc < 4)
 		return RESULT_SHOWUSAGE;
@@ -2918,8 +2924,31 @@ static int handle_speechrecognize(struct ast_channel *chan, AGI *agi, int argc, 
 	timeout = atoi(argv[3]);
 
 	/* If offset is specified then convert from text to integer */
-	if (argc == 5)
+	if (argc >= 5)
 		offset = atoi(argv[4]);
+
+	/* If record file is specified */
+	if (argc >= 6) {
+		recordfile = argv[5];
+		recordformat = "wav";
+	}
+
+	/* If record format is specified */
+	if (argc >= 7)
+		recordformat = argv[6];
+
+	/* Open record fle if specified */
+	if (recordfile) {
+		fs = ast_writefile(recordfile, recordformat, NULL, O_CREAT | O_WRONLY, 0, AST_FILE_MODE);
+		if (!fs) {
+			//res = -1;
+			//ast_agi_send(agi->fd, chan, "200 result=%d (writefile)\n", res);
+			ast_debug(1, "handle_speechrecognize failed to open %s (%s)\n", recordfile, recordformat);
+			//return RESULT_FAILURE;
+		}
+		else
+			ast_debug(1, "handle_speechrecognize writing speech to %s (%s)\n", recordfile, recordformat);
+	}
 
 	/* We want frames coming in signed linear */
 	if (ast_set_read_format(chan, AST_FORMAT_SLINEAR)) {
@@ -2983,8 +3012,11 @@ static int handle_speechrecognize(struct ast_channel *chan, AGI *agi, int argc, 
 				time(&start);
 			}
 			/* Write audio frame data into speech engine if possible */
-			if (fr && fr->frametype == AST_FRAME_VOICE)
+			if (fr && fr->frametype == AST_FRAME_VOICE) {
 				ast_speech_write(speech, fr->data.ptr, fr->datalen);
+				if (fs)
+					ast_writestream(fs, fr);
+			}
 			break;
 		case AST_SPEECH_STATE_WAIT:
 			/* Cue waiting sound if not already playing */
@@ -3018,6 +3050,8 @@ static int handle_speechrecognize(struct ast_channel *chan, AGI *agi, int argc, 
 			ast_frfree(fr);
 		}
 	}
+	if (fs)
+		ast_closestream(fs);
 
 	if (!strcasecmp(reason, "speech")) {
 		/* Build string containing speech results */
