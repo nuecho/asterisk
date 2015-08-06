@@ -783,6 +783,7 @@ static int speech_background(struct ast_channel *chan, const char *data)
 			ast_stopstream(chan);
 			/* Start new stream */
 			speech_streamfile(chan, filename, ast_channel_language(chan));
+			ast_set_flag(speech, AST_SPEECH_IN_PROMPT);
 		}
 
 		/* Run scheduled stuff */
@@ -819,6 +820,7 @@ static int speech_background(struct ast_channel *chan, const char *data)
 		if (ast_test_flag(speech, AST_SPEECH_QUIET)) {
 			if (ast_channel_stream(chan))
 				ast_stopstream(chan);
+			ast_clear_flag(speech, AST_SPEECH_IN_PROMPT);
 			ast_clear_flag(speech, AST_SPEECH_QUIET);
 			quieted = 1;
 		}
@@ -826,8 +828,10 @@ static int speech_background(struct ast_channel *chan, const char *data)
 		switch (speech->state) {
 		case AST_SPEECH_STATE_READY:
 			/* If audio playback has stopped do a check for timeout purposes */
-			if (ast_channel_streamid(chan) == -1 && ast_channel_timingfunc(chan) == NULL)
+			if (ast_channel_streamid(chan) == -1 && ast_channel_timingfunc(chan) == NULL) {
 				ast_stopstream(chan);
+                ast_clear_flag(speech, AST_SPEECH_IN_PROMPT);
+            }
 			if (!quieted && ast_channel_stream(chan) == NULL && timeout && started == 0 && !filename_tmp) {
 				if (timeout == -1) {
 					done = 1;
