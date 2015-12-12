@@ -315,9 +315,16 @@ static int add_ids(struct ast_sched_context *con)
 		if (!new_id) {
 			break;
 		}
-		new_id->id = i;
+
+		/*
+		 * According to the API doxygen a sched ID of 0 is valid.
+		 * Unfortunately, 0 was never returned historically and
+		 * several users incorrectly coded usage of the returned
+		 * sched ID assuming that 0 was invalid.
+		 */
+		new_id->id = ++con->id_queue_size;
+
 		AST_LIST_INSERT_TAIL(&con->id_queue, new_id, list);
-		++con->id_queue_size;
 	}
 
 	return con->id_queue_size - original_size;
@@ -449,6 +456,17 @@ static void schedule(struct ast_sched_context *con, struct sched *s)
 static int sched_settime(struct timeval *t, int when)
 {
 	struct timeval now = ast_tvnow();
+
+	if (when < 0) {
+		/*
+		 * A negative when value is likely a bug as it
+		 * represents a VERY large timeout time.
+		 */
+		ast_log(LOG_WARNING,
+			"Bug likely: Negative time interval %d (interpreted as %u ms) requested!\n",
+			when, (unsigned int) when);
+		ast_assert(0);
+	}
 
 	/*ast_debug(1, "TV -> %lu,%lu\n", tv->tv_sec, tv->tv_usec);*/
 	if (ast_tvzero(*t))	/* not supplied, default to now */

@@ -3584,7 +3584,7 @@ static struct ast_frame *create_dtmf_frame(struct ast_rtp_instance *instance, en
 	struct ast_sockaddr remote_address = { {0,} };
 
 	ast_rtp_instance_get_remote_address(instance, &remote_address);
-
+#if 0
 	if (((compensate && type == AST_FRAME_DTMF_END) || (type == AST_FRAME_DTMF_BEGIN)) && ast_tvcmp(ast_tvnow(), rtp->dtmfmute) < 0) {
 		ast_debug(1, "Ignore potential DTMF echo from '%s'\n",
 			  ast_sockaddr_stringify(&remote_address));
@@ -3592,6 +3592,7 @@ static struct ast_frame *create_dtmf_frame(struct ast_rtp_instance *instance, en
 		rtp->dtmfsamples = 0;
 		return &ast_null_frame;
 	}
+#endif
 	ast_debug(1, "Creating %s DTMF Frame: %d (%c), at %s\n",
 		type == AST_FRAME_DTMF_END ? "END" : "BEGIN",
 		rtp->resp, rtp->resp,
@@ -4703,7 +4704,7 @@ static struct ast_frame *ast_rtp_read(struct ast_rtp_instance *instance, int rtc
 		rtp->f.delivery.tv_sec = 0;
 		rtp->f.delivery.tv_usec = 0;
 		/* Pass the RTP marker bit as bit */
-		rtp->f.subclass.frame_ending = mark;
+		rtp->f.subclass.frame_ending = mark ? 1 : 0;
 	} else if (ast_format_get_type(rtp->f.subclass.format) == AST_MEDIA_TYPE_TEXT) {
 		/* TEXT -- samples is # of samples vs. 1000 */
 		if (!rtp->lastitexttimestamp)
@@ -4780,7 +4781,7 @@ static void ast_rtp_prop_set(struct ast_rtp_instance *instance, enum ast_rtp_pro
 			return;
 		} else {
 			if (rtp->rtcp) {
-				if (rtp->rtcp->schedid > 0) {
+				if (rtp->rtcp->schedid > -1) {
 					if (!ast_sched_del(rtp->sched, rtp->rtcp->schedid)) {
 						/* Successfully cancelled scheduler entry. */
 						ao2_ref(instance, -1);
@@ -4997,7 +4998,7 @@ static void ast_rtp_stop(struct ast_rtp_instance *instance)
 	}
 #endif
 
-	if (rtp->rtcp && rtp->rtcp->schedid > 0) {
+	if (rtp->rtcp && rtp->rtcp->schedid > -1) {
 		if (!ast_sched_del(rtp->sched, rtp->rtcp->schedid)) {
 			/* successfully cancelled scheduler entry. */
 			ao2_ref(instance, -1);

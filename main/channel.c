@@ -339,7 +339,7 @@ static char *complete_channeltypes(struct ast_cli_args *a)
 static char *handle_cli_core_show_channeltype(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a)
 {
 	struct chanlist *cl = NULL;
-	struct ast_str *codec_buf = ast_str_alloca(256);
+	struct ast_str *codec_buf = ast_str_alloca(AST_FORMAT_CAP_NAMES_LEN);
 
 	switch (cmd) {
 	case CLI_INIT:
@@ -872,6 +872,7 @@ __ast_channel_alloc_ap(int needqueue, int state, const char *cid_num, const char
 	ast_channel_hold_state_set(tmp, AST_CONTROL_UNHOLD);
 
 	ast_channel_streamid_set(tmp, -1);
+	ast_channel_vstreamid_set(tmp, -1);
 
 	ast_channel_fin_set(tmp, global_fin);
 	ast_channel_fout_set(tmp, global_fout);
@@ -4799,6 +4800,8 @@ int ast_senddigit_begin(struct ast_channel *chan, char digit)
 		ast_playtones_start(chan, 0, dtmf_tones[digit-'0'], 0);
 	else if (digit >= 'A' && digit <= 'D')
 		ast_playtones_start(chan, 0, dtmf_tones[digit-'A'+10], 0);
+	else if (digit >= 'a' && digit <= 'd')
+		ast_playtones_start(chan, 0, dtmf_tones[digit-'a'+10], 0);
 	else if (digit == '*')
 		ast_playtones_start(chan, 0, dtmf_tones[14], 0);
 	else if (digit == '#')
@@ -5094,7 +5097,7 @@ int ast_write(struct ast_channel *chan, struct ast_frame *fr)
 			f = fr;
 		} else {
 			if (ast_format_cmp(ast_channel_writeformat(chan), fr->subclass.format) != AST_FORMAT_CMP_EQUAL) {
-				struct ast_str *codec_buf = ast_str_alloca(256);
+				struct ast_str *codec_buf = ast_str_alloca(AST_FORMAT_CAP_NAMES_LEN);
 
 				/*
 				 * We are not setup to write this frame.  Things may have changed
@@ -5435,8 +5438,8 @@ static int set_format(struct ast_channel *chan, struct ast_format_cap *cap_set, 
 		res = ast_translator_best_choice(cap_native, cap_set, &best_native_fmt, &best_set_fmt);
 	}
 	if (res < 0) {
-		struct ast_str *codec_native = ast_str_alloca(256);
-		struct ast_str *codec_set = ast_str_alloca(256);
+		struct ast_str *codec_native = ast_str_alloca(AST_FORMAT_CAP_NAMES_LEN);
+		struct ast_str *codec_set = ast_str_alloca(AST_FORMAT_CAP_NAMES_LEN);
 
 		ast_format_cap_get_names(cap_native, &codec_native);
 		ast_channel_unlock(chan);
@@ -5978,8 +5981,8 @@ struct ast_channel *ast_request(const char *type, struct ast_format_cap *request
 			res = ast_translator_best_choice(tmp_cap, chan->tech->capabilities, &tmp_fmt, &best_audio_fmt);
 			ao2_ref(tmp_cap, -1);
 			if (res < 0) {
-				struct ast_str *tech_codecs = ast_str_alloca(64);
-				struct ast_str *request_codecs = ast_str_alloca(64);
+				struct ast_str *tech_codecs = ast_str_alloca(AST_FORMAT_CAP_NAMES_LEN);
+				struct ast_str *request_codecs = ast_str_alloca(AST_FORMAT_CAP_NAMES_LEN);
 
 				ast_log(LOG_WARNING, "No translator path exists for channel type %s (native %s) to %s\n", type,
 					ast_format_cap_get_names(chan->tech->capabilities, &tech_codecs),

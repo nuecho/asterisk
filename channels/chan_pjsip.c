@@ -162,8 +162,15 @@ static enum ast_rtp_glue_result chan_pjsip_get_rtp_peer(struct ast_channel *chan
 	struct ast_sip_channel_pvt *channel = ast_channel_tech_pvt(chan);
 	struct chan_pjsip_pvt *pvt;
 	struct ast_sip_endpoint *endpoint;
+	struct ast_datastore *datastore;
 
 	if (!channel || !channel->session || !(pvt = channel->pvt) || !pvt->media[SIP_MEDIA_AUDIO]->rtp) {
+		return AST_RTP_GLUE_RESULT_FORBID;
+	}
+
+	datastore = ast_sip_session_get_datastore(channel->session, "t38");
+	if (datastore) {
+		ao2_ref(datastore, -1);
 		return AST_RTP_GLUE_RESULT_FORBID;
 	}
 
@@ -673,7 +680,7 @@ static int chan_pjsip_write(struct ast_channel *ast, struct ast_frame *frame)
 			return 0;
 		}
 		if (ast_format_cap_iscompatible_format(ast_channel_nativeformats(ast), frame->subclass.format) == AST_FORMAT_CMP_NOT_EQUAL) {
-			struct ast_str *cap_buf = ast_str_alloca(128);
+			struct ast_str *cap_buf = ast_str_alloca(AST_FORMAT_CAP_NAMES_LEN);
 			struct ast_str *write_transpath = ast_str_alloca(256);
 			struct ast_str *read_transpath = ast_str_alloca(256);
 
@@ -1386,6 +1393,8 @@ static void transfer_refer(struct ast_sip_session *session, const char *target)
 	enum ast_control_transfer message = AST_TRANSFER_SUCCESS;
 	pj_str_t tmp;
 	pjsip_tx_data *packet;
+	const char *ref_by_val;
+	char local_info[pj_strlen(&session->inv_session->dlg->local.info_str) + 1];
 
 	if (pjsip_xfer_create_uac(session->inv_session->dlg, NULL, &sub) != PJ_SUCCESS) {
 		message = AST_TRANSFER_FAILED;
@@ -1400,6 +1409,14 @@ static void transfer_refer(struct ast_sip_session *session, const char *target)
 		pjsip_evsub_terminate(sub, PJ_FALSE);
 
 		return;
+	}
+
+	ref_by_val = pbx_builtin_getvar_helper(session->channel, "SIPREFERREDBYHDR");
+	if (!ast_strlen_zero(ref_by_val)) {
+		ast_sip_add_header(packet, "Referred-By", ref_by_val);
+	} else {
+		ast_copy_pj_str(local_info, &session->inv_session->dlg->local.info_str, sizeof(local_info));
+		ast_sip_add_header(packet, "Referred-By", local_info);
 	}
 
 	pjsip_xfer_send_request(sub, packet);
@@ -2075,7 +2092,8 @@ static int chan_pjsip_incoming_request(struct ast_sip_session *session, struct p
 		return 0;
 	}
 
-	if (session->inv_session->state >= PJSIP_INV_STATE_CONFIRMED) {
+	/* Check for a to-tag to determine if this is a reinvite */
+	if (rdata->msg_info.to->tag.slen) {
 		/* Weird case. We've received a reinvite but we don't have a channel. The most
 		 * typical case for this happening is that a blind transfer fails, and so the
 		 * transferer attempts to reinvite himself back into the call. We already got
@@ -2122,8 +2140,9 @@ static int call_pickup_incoming_request(struct ast_sip_session *session, pjsip_r
 	struct ast_features_pickup_config *pickup_cfg;
 	struct ast_channel *chan;
 
-	/* We don't care about reinvites */
-	if (session->inv_session->state >= PJSIP_INV_STATE_CONFIRMED) {
+	/* Check for a to-tag to determine if this is a reinvite */
+	if (rdata->msg_info.to->tag.slen) {
+		/* We don't care about reinvites */
 		return 0;
 	}
 
@@ -2170,8 +2189,9 @@ static int pbx_start_incoming_request(struct ast_sip_session *session, pjsip_rx_
 {
 	int res;
 
-	/* We don't care about reinvites */
-	if (session->inv_session->state >= PJSIP_INV_STATE_CONFIRMED) {
+	/* Check for a to-tag to determine if this is a reinvite */
+	if (rdata->msg_info.to->tag.slen) {
+		/* We don't care about reinvites */
 		return 0;
 	}
 

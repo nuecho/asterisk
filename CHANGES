@@ -9,6 +9,88 @@
 ==============================================================================
 
 ------------------------------------------------------------------------------
+--- Functionality changes from Asterisk 13.6.0 to Asterisk 13.7.0 ------------
+------------------------------------------------------------------------------
+
+Codecs
+------------------
+ * Added format attribute negotiation for the VP8 video codec. Format attribute
+   negotiation is provided by the res_format_attr_vp8 module.
+
+ConfBridge
+------------------
+ * A new "timeout" user profile option has been added. This configures the number
+   of seconds that a participant may stay in the ConfBridge after joining. When
+   the time expires, the user is ejected from the conference and CONFBRIDGE_RESULT
+   is set to "TIMEOUT" on the channel.
+
+chan_sip
+------------------
+ * The websockets_enabled option has been added to the general section of
+   sip.conf.  The option is enabled by default to match the previous behavior.
+   The option should be disabled when using res_pjsip_transport_websockets to
+   ensure chan_sip will not conflict with PJSIP websockets.
+
+Dialplan Functions
+------------------
+ * The HOLD_INTERCEPT dialplan function now actually exists in the source tree.
+   While support for the events was added in Asterisk 13.4.0, the function
+   accidentally never made it in. That function is now present, and will cause
+   the 'hold' raised by a channel to be intercepted and converted into an
+   event instead.
+
+res_pjsip_outbound_registration
+-------------------------------
+ * A new 'fatal_retry_interval' option has been added to outbound registration.
+   When set (default is zero), and upon receiving a failure response to an
+   outbound registration, registration is retried at the given interval up to
+   'max_retries'.
+
+ * If res_statsd is loaded and a StatsD server is configured, basic statistics
+   regarding the state of outbound registrations will now be emitted. This
+   includes:
+   - A GAUGE statistic for the overall number of outbound registrations, i.e.:
+       PJSIP.registrations.count
+   - A GAUGE statistic for the overall number of outbound registrations in a
+     particular state, e.g.:
+       PJSIP.registrations.state.Registered
+
+res_pjsip
+------------------
+ * The ability to use "like" has been added to the pjsip list and show
+   CLI commands.  For instance: CLI> pjsip list endpoints like abc
+
+ * If res_statsd is loaded and a StatsD server is configured, basic statistics
+   regarding the state of PJSIP contacts will now be emitted. This includes:
+   - A GAUGE statistic for the overall number of contacts in a particular
+     state, e.g.:
+       PJSIP.contacts.states.Reachable
+   - A TIMER statistic for the RTT time for each qualified contact, e.g.:
+       PJSIP.contacts.alice@@127.0.0.1:5061.rtt
+
+func_callerid
+-------------------
+ * CALLERID(pres) is now documented as a valid alternative to setting both
+   CALLERID(name-pres) and CALLERID(num-pres) at once.  Some channel drivers,
+   like chan_sip, don't make a distinction between the two: they take the
+   least public value from name-pres and num-pres.  By using CALLERID(pres)
+   for reading and writing, you touch the same combined value in the dialplan.
+   The same applies to CONNECTEDLINE(pres), REDIRECTING(orig-pres),
+   REDIRECTING(to-pres) and REDIRECTING(from-pres).
+
+res_endpoint_stats
+-------------------
+ * A new module that emits StatsD statistics regarding Asterisk endpoints.
+   This includes a total count of the number of endpoints, the count of the
+   number of endpoints in the technology agnostic state of the endpoint -
+   online or offline - as well as the number of channels associated with each
+   endpoint. These are recorded as three different GAUGE statistics:
+    - endpoints.count
+    - endpoints.state.{unknown|offline|online}
+    - endpoints.{tech}.{resource}.channels
+
+
+------------------------------------------------------------------------------
 --- Functionality changes from Asterisk 13.5.0 to Asterisk 13.6.0 ------------
 ------------------------------------------------------------------------------
 

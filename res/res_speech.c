@@ -127,6 +127,7 @@ void ast_speech_start(struct ast_speech *speech)
 	ast_clear_flag(speech, AST_SPEECH_SPOKE);
 	ast_clear_flag(speech, AST_SPEECH_QUIET);
 	ast_clear_flag(speech, AST_SPEECH_HAVE_RESULTS);
+	ast_clear_flag(speech, AST_SPEECH_IN_PROMPT);
 
 	/* If results are on the structure, free them since we are starting again */
 	if (speech->results) {

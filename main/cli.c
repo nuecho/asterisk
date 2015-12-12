@@ -1076,10 +1076,12 @@ static char *handle_chanlist(struct ast_cli_entry *e, int cmd, struct ast_cli_ar
 				char locbuf[40] = "(None)";
 				char appdata[40] = "(None)";
 
-				if (!cs->context && !cs->exten)
+				if (!ast_strlen_zero(cs->context) && !ast_strlen_zero(cs->exten)) {
 					snprintf(locbuf, sizeof(locbuf), "%s@%s:%d", cs->exten, cs->context, cs->priority);
-				if (cs->appl)
+				}
+				if (!ast_strlen_zero(cs->appl)) {
 					snprintf(appdata, sizeof(appdata), "%s(%s)", cs->appl, S_OR(cs->data, ""));
+				}
 				ast_cli(a->fd, FORMAT_STRING, cs->name, locbuf, ast_state2str(cs->state), appdata);
 			}
 		}
@@ -1528,7 +1530,7 @@ static char *handle_showchan(struct ast_cli_entry *e, int cmd, struct ast_cli_ar
 	struct ast_var_t *var;
 	struct ast_str *write_transpath = ast_str_alloca(256);
 	struct ast_str *read_transpath = ast_str_alloca(256);
-	struct ast_str *codec_buf = ast_str_alloca(64);
+	struct ast_str *codec_buf = ast_str_alloca(AST_FORMAT_CAP_NAMES_LEN);
 	struct ast_bridge *bridge;
 	struct ast_callid *callid;
 	char callid_buf[32];

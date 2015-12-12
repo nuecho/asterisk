@@ -2563,6 +2563,8 @@ pjsip_dialog *ast_sip_create_dialog_uac(const struct ast_sip_endpoint *endpoint,
 
 		pj_strdup2_with_null(dlg->pool, &tmp, outbound_proxy);
 		if (!(route = pjsip_parse_hdr(dlg->pool, &ROUTE_HNAME, tmp.ptr, tmp.slen, NULL))) {
+			ast_log(LOG_ERROR, "Could not create dialog to endpoint '%s' as outbound proxy URI '%s' is not valid\n",
+				ast_sorcery_object_get_id(endpoint), outbound_proxy);
 			dlg->sess_count--;
 			pjsip_dlg_terminate(dlg);
 			return NULL;
@@ -2756,6 +2758,7 @@ static int create_out_of_dialog_request(const pjsip_method *method, struct ast_s
 	pj_str_t from;
 	pj_pool_t *pool;
 	pjsip_tpselector selector = { .type = PJSIP_TPSELECTOR_NONE, };
+	pjsip_uri *sip_uri;
 
 	if (ast_strlen_zero(uri)) {
 		if (!endpoint && (!contact || ast_strlen_zero(contact->uri))) {
@@ -2792,6 +2795,16 @@ static int create_out_of_dialog_request(const pjsip_method *method, struct ast_s
 		return -1;
 	}
 
+	sip_uri = pjsip_parse_uri(pool, remote_uri.ptr, remote_uri.slen, 0);
+	if (!sip_uri || (!PJSIP_URI_SCHEME_IS_SIP(sip_uri) && !PJSIP_URI_SCHEME_IS_SIPS(sip_uri))) {
+		ast_log(LOG_ERROR, "Unable to create outbound %.*s request to endpoint %s as URI '%s' is not valid\n",
+			(int) pj_strlen(&method->name), pj_strbuf(&method->name),
+			endpoint ? ast_sorcery_object_get_id(endpoint) : "<none>",
+			pj_strbuf(&remote_uri));
+		pjsip_endpt_release_pool(ast_sip_get_pjsip_endpoint(), pool);
+		return -1;
+	}
+
 	if (sip_dialog_create_from(pool, &from, endpoint ? endpoint->fromuser : NULL,
 				endpoint ? endpoint->fromdomain : NULL, &remote_uri, &selector)) {
 		ast_log(LOG_ERROR, "Unable to create From header for %.*s request to endpoint %s\n",
@@ -2816,8 +2829,9 @@ static int create_out_of_dialog_request(const pjsip_method *method, struct ast_s
 	/* If an outbound proxy is specified on the endpoint apply it to this request */
 	if (endpoint && !ast_strlen_zero(endpoint->outbound_proxy) &&
 		ast_sip_set_outbound_proxy((*tdata), endpoint->outbound_proxy)) {
-		ast_log(LOG_ERROR, "Unable to apply outbound proxy on request %.*s to endpoint %s\n",
-			(int) pj_strlen(&method->name), pj_strbuf(&method->name), ast_sorcery_object_get_id(endpoint));
+		ast_log(LOG_ERROR, "Unable to apply outbound proxy on request %.*s to endpoint %s as outbound proxy URI '%s' is not valid\n",
+			(int) pj_strlen(&method->name), pj_strbuf(&method->name), ast_sorcery_object_get_id(endpoint),
+			endpoint->outbound_proxy);
 		pjsip_endpt_release_pool(ast_sip_get_pjsip_endpoint(), pool);
 		return -1;
 	}
@@ -2962,8 +2976,6 @@ struct send_request_wrapper {
 	pj_timer_entry *timeout_timer;
 	/*! Original timeout. */
 	pj_int32_t timeout;
-	/*! Timeout/cleanup lock. */
-	pj_mutex_t *lock;
 	/*! The transmit data. */
 	pjsip_tx_data *tdata;
 };
@@ -2989,7 +3001,7 @@ static void endpt_send_request_cb(void *token, pjsip_event *e)
 		ast_debug(2, "%p: PJSIP tsx response received\n", req_wrapper);
 	}
 
-	pj_mutex_lock(req_wrapper->lock);
+	ao2_lock(req_wrapper);
 
 	/* It's possible that our own timer was already processing while
 	 * we were waiting on the lock so check the timer id.  If it's
@@ -3030,7 +3042,7 @@ static void endpt_send_request_cb(void *token, pjsip_event *e)
 		req_wrapper->cb_called = 1;
 		ast_debug(2, "%p: Callbacks executed\n", req_wrapper);
 	}
-	pj_mutex_unlock(req_wrapper->lock);
+	ao2_unlock(req_wrapper);
 	ao2_ref(req_wrapper, -1);
 }
 
@@ -3047,12 +3059,12 @@ static void send_request_timer_callback(pj_timer_heap_t *theap, pj_timer_entry *
 	ast_debug(2, "%p: Internal tsx timer expired after %d msec\n",
 		req_wrapper, req_wrapper->timeout);
 
-	pj_mutex_lock(req_wrapper->lock);
+	ao2_lock(req_wrapper);
 	/* If the id is not TIMEOUT_TIMER2 then the timer was cancelled above
 	 * while the lock was being held so just clean up.
 	 */
 	if (entry->id != TIMEOUT_TIMER2) {
-		pj_mutex_unlock(req_wrapper->lock);
+		ao2_unlock(req_wrapper);
 		ast_debug(3, "%p: Timeout already handled\n", req_wrapper);
 		ao2_ref(req_wrapper, -1);
 		return;
@@ -3070,7 +3082,7 @@ static void send_request_timer_callback(pj_timer_heap_t *theap, pj_timer_entry *
 		ast_debug(2, "%p: Callbacks executed\n", req_wrapper);
 	}
 
-	pj_mutex_unlock(req_wrapper->lock);
+	ao2_unlock(req_wrapper);
 	ao2_ref(req_wrapper, -1);
 }
 
@@ -3078,7 +3090,6 @@ static void send_request_wrapper_destructor(void *obj)
 {
 	struct send_request_wrapper *req_wrapper = obj;
 
-	pj_mutex_destroy(req_wrapper->lock);
 	pjsip_tx_data_dec_ref(req_wrapper->tdata);
 	ast_debug(2, "%p: wrapper destroyed\n", req_wrapper);
 }
@@ -3091,8 +3102,7 @@ static pj_status_t endpt_send_request(struct ast_sip_endpoint *endpoint,
 	pjsip_endpoint *endpt = ast_sip_get_pjsip_endpoint();
 
 	/* Create wrapper to detect if the callback was actually called on an error. */
-	req_wrapper = ao2_alloc_options(sizeof(*req_wrapper), send_request_wrapper_destructor,
-		AO2_ALLOC_OPT_LOCK_NOLOCK);
+	req_wrapper = ao2_alloc(sizeof(*req_wrapper), send_request_wrapper_destructor);
 	if (!req_wrapper) {
 		pjsip_tx_data_dec_ref(tdata);
 		return PJ_ENOMEM;
@@ -3104,25 +3114,11 @@ static pj_status_t endpt_send_request(struct ast_sip_endpoint *endpoint,
 	req_wrapper->callback = cb;
 	req_wrapper->timeout = timeout;
 	req_wrapper->timeout_timer = NULL;
-	req_wrapper->lock = NULL;
 	req_wrapper->tdata = tdata;
 	/* Add a reference to tdata.  The wrapper destructor cleans it up. */
 	pjsip_tx_data_add_ref(tdata);
 
-	ret_val = pj_mutex_create_simple(tdata->pool, "tsx_timeout", &req_wrapper->lock);
-	if (ret_val != PJ_SUCCESS) {
-		char errmsg[PJ_ERR_MSG_SIZE];
-		pj_strerror(ret_val, errmsg, sizeof(errmsg));
-		ast_log(LOG_ERROR, "Error %d '%s' sending %.*s request to endpoint %s\n",
-			(int) ret_val, errmsg, (int) pj_strlen(&tdata->msg->line.req.method.name),
-			pj_strbuf(&tdata->msg->line.req.method.name),
-			endpoint ? ast_sorcery_object_get_id(endpoint) : "<unknown>");
-		pjsip_tx_data_dec_ref(tdata);
-		ao2_ref(req_wrapper, -1);
-		return PJ_ENOMEM;
-	}
-
-	pj_mutex_lock(req_wrapper->lock);
+	ao2_lock(req_wrapper);
 
 	if (timeout > 0) {
 		pj_time_val timeout_timer_val = { timeout / 1000, timeout % 1000 };
@@ -3159,9 +3155,11 @@ static pj_status_t endpt_send_request(struct ast_sip_endpoint *endpoint,
 		char errmsg[PJ_ERR_MSG_SIZE];
 
 		if (timeout > 0) {
-			pj_timer_heap_cancel_if_active(pjsip_endpt_get_timer_heap(endpt),
+			int timers_cancelled = pj_timer_heap_cancel_if_active(pjsip_endpt_get_timer_heap(endpt),
 				req_wrapper->timeout_timer, TIMER_INACTIVE);
-			ao2_ref(req_wrapper, -1);
+			if (timers_cancelled > 0) {
+				ao2_ref(req_wrapper, -1);
+			}
 		}
 
 		/* Complain of failure to send the request. */
@@ -3184,7 +3182,7 @@ static pj_status_t endpt_send_request(struct ast_sip_endpoint *endpoint,
 			ao2_ref(req_wrapper, -1);
 		}
 	}
-	pj_mutex_unlock(req_wrapper->lock);
+	ao2_unlock(req_wrapper);
 	ao2_ref(req_wrapper, -1);
 	return ret_val;
 }
@@ -3757,6 +3755,11 @@ static void remove_request_headers(pjsip_endpoint *endpt)
 		iter = iter->next;
 		pj_list_erase(to_erase);
 	}
+}
+
+long ast_sip_threadpool_queue_size(void)
+{
+	return ast_threadpool_queue_size(sip_threadpool);
 }
 
 AST_TEST_DEFINE(xml_sanitization_end_null)

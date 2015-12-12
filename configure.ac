@@ -1128,11 +1128,11 @@ if $(${CC} -march=native -S -o /dev/null -xc /dev/null > /dev/null 2>&1); then
 		AST_NATIVE_ARCH=1
 	else
 		AC_MSG_RESULT(user CFLAGS present)
-		AST_NATIVE_ARCH=
+		AST_NATIVE_ARCH=0
 	fi
 else
 	AC_MSG_RESULT(no)
-	AST_NATIVE_ARCH=
+	AST_NATIVE_ARCH=0
 fi
 AC_SUBST(AST_NATIVE_ARCH)
 

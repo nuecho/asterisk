@@ -122,6 +122,8 @@ struct sorcery_memory_cache {
 	struct ast_heap *object_heap;
 	/*! \brief Scheduler item for expiring oldest object. */
 	int expire_id;
+	/*! TRUE if trying to stop the oldest object expiration scheduler item. */
+	unsigned int del_expire:1;
 #ifdef TEST_FRAMEWORK
 	/*! \brief Variable used to indicate we should notify a test when we reach empty */
 	unsigned int cache_notify;
@@ -241,7 +243,7 @@ static int sorcery_memory_cache_hash(const void *obj, int flags)
 	const char *name = obj;
 	int hash;
 
-	switch (flags & (OBJ_SEARCH_OBJECT | OBJ_SEARCH_KEY | OBJ_SEARCH_PARTIAL_KEY)) {
+	switch (flags & OBJ_SEARCH_MASK) {
 	default:
 	case OBJ_SEARCH_OBJECT:
 		name = cache->name;
@@ -276,7 +278,7 @@ static int sorcery_memory_cache_cmp(void *obj, void *arg, int flags)
 	const char *right_name = arg;
 	int cmp;
 
-	switch (flags & (OBJ_SEARCH_OBJECT | OBJ_SEARCH_KEY | OBJ_SEARCH_PARTIAL_KEY)) {
+	switch (flags & OBJ_SEARCH_MASK) {
 	default:
 	case OBJ_SEARCH_OBJECT:
 		right_name = right->name;
@@ -306,7 +308,7 @@ static int sorcery_memory_cached_object_hash(const void *obj, int flags)
 	const char *name = obj;
 	int hash;
 
-	switch (flags & (OBJ_SEARCH_OBJECT | OBJ_SEARCH_KEY | OBJ_SEARCH_PARTIAL_KEY)) {
+	switch (flags & OBJ_SEARCH_MASK) {
 	default:
 	case OBJ_SEARCH_OBJECT:
 		name = ast_sorcery_object_get_id(cached->object);
@@ -341,7 +343,7 @@ static int sorcery_memory_cached_object_cmp(void *obj, void *arg, int flags)
 	const char *right_name = arg;
 	int cmp;
 
-	switch (flags & (OBJ_SEARCH_OBJECT | OBJ_SEARCH_KEY | OBJ_SEARCH_PARTIAL_KEY)) {
+	switch (flags & OBJ_SEARCH_MASK) {
 	default:
 	case OBJ_SEARCH_OBJECT:
 		right_name = ast_sorcery_object_get_id(right->object);
@@ -367,10 +369,10 @@ static void sorcery_memory_cache_destructor(void *obj)
 	struct sorcery_memory_cache *cache = obj;
 
 	ast_free(cache->name);
-	ao2_cleanup(cache->objects);
 	if (cache->object_heap) {
 		ast_heap_destroy(cache->object_heap);
 	}
+	ao2_cleanup(cache->objects);
 }
 
 /*!
@@ -409,8 +411,7 @@ static int remove_from_cache(struct sorcery_memory_cache *cache, const char *id,
 	struct sorcery_memory_cached_object *oldest_object;
 	struct sorcery_memory_cached_object *heap_object;
 
-	hash_object = ao2_find(cache->objects, id,
-		OBJ_SEARCH_KEY | OBJ_UNLINK | OBJ_NOLOCK);
+	hash_object = ao2_find(cache->objects, id, OBJ_SEARCH_KEY | OBJ_UNLINK | OBJ_NOLOCK);
 	if (!hash_object) {
 		return -1;
 	}
@@ -442,11 +443,25 @@ static int expire_objects_from_cache(const void *data)
 	struct sorcery_memory_cache *cache = (struct sorcery_memory_cache *)data;
 	struct sorcery_memory_cached_object *cached;
 
-	ao2_wrlock(cache->objects);
+	/*
+	 * We need to do deadlock avoidance between a non-scheduler thread
+	 * blocking when trying to delete the scheduled entry for this
+	 * callback because the scheduler thread is running this callback
+	 * and this callback waiting for the cache->objects container lock
+	 * that the blocked non-scheduler thread already holds.
+	 */
+	while (ao2_trywrlock(cache->objects)) {
+		if (cache->del_expire) {
+			cache->expire_id = -1;
+			ao2_ref(cache, -1);
+			return 0;
+		}
+		sched_yield();
+	}
 
 	cache->expire_id = -1;
 
-	/* This is an optimization for objects which have been cached close to eachother */
+	/* This is an optimization for objects which have been cached close to each other */
 	while ((cached = ast_heap_peek(cache->object_heap, 1))) {
 		int expiration;
 
@@ -481,12 +496,15 @@ static int expire_objects_from_cache(const void *data)
  */
 static void remove_all_from_cache(struct sorcery_memory_cache *cache)
 {
-	while (ast_heap_pop(cache->object_heap));
+	while (ast_heap_pop(cache->object_heap)) {
+	}
 
 	ao2_callback(cache->objects, OBJ_UNLINK | OBJ_NOLOCK | OBJ_NODATA | OBJ_MULTIPLE,
 		NULL, NULL);
 
+	cache->del_expire = 1;
 	AST_SCHED_DEL_UNREF(sched, cache->expire_id, ao2_ref(cache, -1));
+	cache->del_expire = 0;
 }
 
 /*!
@@ -579,18 +597,9 @@ static int schedule_cache_expiration(struct sorcery_memory_cache *cache)
 		return 0;
 	}
 
-	if (cache->expire_id != -1) {
-		/* If we can't unschedule this expiration then it is currently attempting to run,
-		 * so let it run - it just means that it'll be the one scheduling instead of us.
-		 */
-		if (ast_sched_del(sched, cache->expire_id)) {
-			return 0;
-		}
-
-		/* Since it successfully cancelled we need to drop the ref to the cache it had */
-		ao2_ref(cache, -1);
-		cache->expire_id = -1;
-	}
+	cache->del_expire = 1;
+	AST_SCHED_DEL_UNREF(sched, cache->expire_id, ao2_ref(cache, -1));
+	cache->del_expire = 0;
 
 	cached = ast_heap_peek(cache->object_heap, 1);
 	if (!cached) {
@@ -715,8 +724,8 @@ static int sorcery_memory_cache_create(const struct ast_sorcery *sorcery, void *
 		if (remove_oldest_from_cache(cache)) {
 			ast_log(LOG_ERROR, "Unable to make room in cache for sorcery object '%s'.\n",
 				ast_sorcery_object_get_id(object));
-			ao2_ref(cached, -1);
 			ao2_unlock(cache->objects);
+			ao2_ref(cached, -1);
 			return -1;
 		}
 		ast_assert(ao2_container_count(cache->objects) != cache->maximum_objects);
@@ -724,8 +733,8 @@ static int sorcery_memory_cache_create(const struct ast_sorcery *sorcery, void *
 	if (add_to_cache(cache, cached)) {
 		ast_log(LOG_ERROR, "Unable to add object '%s' to the cache\n",
 			ast_sorcery_object_get_id(object));
-		ao2_ref(cached, -1);
 		ao2_unlock(cache->objects);
+		ao2_ref(cached, -1);
 		return -1;
 	}
 	ao2_unlock(cache->objects);
@@ -839,13 +848,16 @@ static void *sorcery_memory_cache_retrieve_id(const struct ast_sorcery *sorcery,
 			if (cached->stale_update_sched_id == -1) {
 				struct stale_update_task_data *task_data;
 
-				task_data = stale_update_task_data_alloc((struct ast_sorcery *)sorcery, cache,
-					type, cached->object);
+				task_data = stale_update_task_data_alloc((struct ast_sorcery *) sorcery,
+					cache, type, cached->object);
 				if (task_data) {
 					ast_debug(1, "Cached sorcery object type '%s' ID '%s' is stale. Refreshing\n",
 						type, id);
-					cached->stale_update_sched_id = ast_sched_add(sched, 1, stale_item_update, task_data);
-				} else {
+					cached->stale_update_sched_id = ast_sched_add(sched, 1,
+						stale_item_update, task_data);
+				}
+				if (cached->stale_update_sched_id < 0) {
+					ao2_cleanup(task_data);
 					ast_log(LOG_ERROR, "Unable to update stale cached object type '%s', ID '%s'.\n",
 						type, id);
 				}
@@ -1061,9 +1073,7 @@ static void sorcery_memory_cache_close(void *data)
 		 * a prolonged period of time.
 		 */
 		ao2_wrlock(cache->objects);
-		ao2_callback(cache->objects, OBJ_UNLINK | OBJ_NOLOCK | OBJ_NODATA | OBJ_MULTIPLE,
-			NULL, NULL);
-		AST_SCHED_DEL_UNREF(sched, cache->expire_id, ao2_ref(cache, -1));
+		remove_all_from_cache(cache);
 		ao2_unlock(cache->objects);
 	}
 
@@ -2480,22 +2490,6 @@ cleanup:
 
 static int unload_module(void)
 {
-	if (sched) {
-		ast_sched_context_destroy(sched);
-		sched = NULL;
-	}
-
-	ao2_cleanup(caches);
-
-	ast_sorcery_wizard_unregister(&memory_cache_object_wizard);
-
-	ast_cli_unregister_multiple(cli_memory_cache, ARRAY_LEN(cli_memory_cache));
-
-	ast_manager_unregister("SorceryMemoryCacheExpireObject");
-	ast_manager_unregister("SorceryMemoryCacheExpire");
-	ast_manager_unregister("SorceryMemoryCacheStaleObject");
-	ast_manager_unregister("SorceryMemoryCacheStale");
-
 	AST_TEST_UNREGISTER(open_with_valid_options);
 	AST_TEST_UNREGISTER(open_with_invalid_options);
 	AST_TEST_UNREGISTER(create_and_retrieve);
@@ -2505,12 +2499,41 @@ static int unload_module(void)
 	AST_TEST_UNREGISTER(expiration);
 	AST_TEST_UNREGISTER(stale);
 
+	ast_manager_unregister("SorceryMemoryCacheExpireObject");
+	ast_manager_unregister("SorceryMemoryCacheExpire");
+	ast_manager_unregister("SorceryMemoryCacheStaleObject");
+	ast_manager_unregister("SorceryMemoryCacheStale");
+
+	ast_cli_unregister_multiple(cli_memory_cache, ARRAY_LEN(cli_memory_cache));
+
+	ast_sorcery_wizard_unregister(&memory_cache_object_wizard);
+
+	/*
+	 * XXX There is the potential to leak memory if there are pending
+	 * next-cache-expiration and stale-cache-update tasks in the scheduler.
+	 */
+	if (sched) {
+		ast_sched_context_destroy(sched);
+		sched = NULL;
+	}
+
+	ao2_cleanup(caches);
+	caches = NULL;
+
 	return 0;
 }
 
 static int load_module(void)
 {
 	int res;
+
+	caches = ao2_container_alloc(CACHES_CONTAINER_BUCKET_SIZE, sorcery_memory_cache_hash,
+		sorcery_memory_cache_cmp);
+	if (!caches) {
+		ast_log(LOG_ERROR, "Failed to create container for configured caches\n");
+		unload_module();
+		return AST_MODULE_LOAD_DECLINE;
+	}
 
 	sched = ast_sched_context_create();
 	if (!sched) {
@@ -2521,14 +2544,6 @@ static int load_module(void)
 
 	if (ast_sched_start_thread(sched)) {
 		ast_log(LOG_ERROR, "Failed to create scheduler thread for cache management\n");
-		unload_module();
-		return AST_MODULE_LOAD_DECLINE;
-	}
-
-	caches = ao2_container_alloc(CACHES_CONTAINER_BUCKET_SIZE, sorcery_memory_cache_hash,
-		sorcery_memory_cache_cmp);
-	if (!caches) {
-		ast_log(LOG_ERROR, "Failed to create container for configured caches\n");
 		unload_module();
 		return AST_MODULE_LOAD_DECLINE;
 	}

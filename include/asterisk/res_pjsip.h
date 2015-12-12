@@ -170,6 +170,8 @@ struct ast_sip_contact {
 	double qualify_timeout;
 	/*! Endpoint that added the contact, only available in observers */
 	struct ast_sip_endpoint *endpoint;
+	/*! The name of the aor this contact belongs to */
+	char *aor;
 };
 
 #define CONTACT_STATUS "contact_status"
@@ -201,6 +203,10 @@ struct ast_sip_contact_status {
 	int64_t rtt;
 	/*! Last status for a contact (default - unavailable) */
 	enum ast_sip_contact_status_type last_status;
+	/*! The name of the aor this contact_status belongs to */
+	char *aor;
+	/*! The original contact's URI */
+	char *uri;
 };
 
 /*!
@@ -1190,6 +1196,11 @@ int ast_sip_push_task(struct ast_taskprocessor *serializer, int (*sip_task)(void
  * cause a deadlock. If you are in a SIP servant thread, just call your function
  * in-line.
  *
+ * \warning \b Never hold locks that may be acquired by a SIP servant thread when
+ * calling this function. Doing so may cause a deadlock if all SIP servant threads
+ * are blocked waiting to acquire the lock while the thread holding the lock is
+ * waiting for a free SIP servant thread.
+ *
  * \param serializer The SIP serializer to which the task belongs. May be NULL.
  * \param sip_task The task to execute
  * \param task_data The parameter to pass to the task when it executes
@@ -2110,5 +2121,11 @@ int ast_sip_get_host_ip(int af, pj_sockaddr *addr);
  * \note An empty string may be returned if the address family is valid but no local address exists
  */
 const char *ast_sip_get_host_ip_string(int af);
+
+/*!
+ * \brief Return the size of the SIP threadpool's task queue
+ * \since 13.7.0
+ */
+long ast_sip_threadpool_queue_size(void);
 
 #endif /* _RES_PJSIP_H */

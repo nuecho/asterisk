@@ -321,8 +321,8 @@ static int set_caps(struct ast_sip_session *session, struct ast_sip_session_medi
 	/* get the joint capabilities between peer and endpoint */
 	ast_format_cap_get_compatible(caps, peer, joint);
 	if (!ast_format_cap_count(joint)) {
-		struct ast_str *usbuf = ast_str_alloca(256);
-		struct ast_str *thembuf = ast_str_alloca(256);
+		struct ast_str *usbuf = ast_str_alloca(AST_FORMAT_CAP_NAMES_LEN);
+		struct ast_str *thembuf = ast_str_alloca(AST_FORMAT_CAP_NAMES_LEN);
 
 		ast_rtp_codecs_payloads_destroy(&codecs);
 		ast_log(LOG_NOTICE, "No joint capabilities for '%s' media stream between our configuration(%s) and incoming SDP(%s)\n",
@@ -387,8 +387,11 @@ static pjmedia_sdp_attr* generate_rtpmap_attr(struct ast_sip_session *session, p
 	rtpmap.pt = media->desc.fmt[media->desc.fmt_count - 1];
 	rtpmap.clock_rate = ast_rtp_lookup_sample_rate2(asterisk_format, format, code);
 	pj_strdup2(pool, &rtpmap.enc_name, ast_rtp_lookup_mime_subtype2(asterisk_format, format, code, options));
-	rtpmap.param.slen = 0;
-	rtpmap.param.ptr = NULL;
+	if (!pj_stricmp2(&rtpmap.enc_name, "opus")) {
+		pj_cstr(&rtpmap.param, "2");
+	} else {
+		pj_cstr(&rtpmap.param, NULL);
+	}
 
 	pjmedia_sdp_rtpmap_to_attr(pool, &rtpmap, &attr);
 
