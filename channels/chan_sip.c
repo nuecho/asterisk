@@ -7899,7 +7899,7 @@ static struct ast_channel *sip_new(struct sip_pvt *i, int state, const char *tit
 		ast_channel_callid_set(tmp, callid);
 	}
 
-	ast_log(LOG_DEBUG, "sip_new '%s' Callid %s\n", tmp->name, i->callid ? i->callid : "<unknown>");
+	ast_log_callid(LOG_DEBUG, NULL, "sip_new '%s'\n", ast_channel_name(tmp));
 
 	sip_pvt_lock(i);
 	ast_channel_cc_params_init(tmp, i->cc_params);
